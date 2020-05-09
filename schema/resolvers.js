@@ -147,7 +147,7 @@ const resolvers = {
         },
         initGame: async (parent, { gameId, currentWord }, { user }) => {
             const game = await Game.findById(gameId).populate("players");
-            game.currentWord = currentWord.toLowerCase().replace(/\s+/g, "");
+            game.currentWord = currentWord;
             game.step = "selectConcepts";
             await game.save();
             pubsub.publish("GAME_UPDATE", { gameUpdate: game });
@@ -173,6 +173,8 @@ const resolvers = {
                         ? 0
                         : +game.turn + 1;
                 game.step = "selectWord";
+                game.conceptsLists = [[]];
+                game.currentWord = undefined;
             }
             await game.save();
             pubsub.publish("GAME_UPDATE", { gameUpdate: game });
@@ -181,7 +183,8 @@ const resolvers = {
         guessAction: async (parent, { gameId, word }, { user }) => {
             const game = await Game.findById(gameId).populate("players");
             const winner =
-                game.currentWord === word.toLowerCase().replace(/\s+/g, "");
+                game.currentWord &&
+                cleanWord(game.currentWord) === cleanWord(word);
             if (winner) {
                 const turnMaster = game.players[game.turn];
                 const turnMasterPoints = await Points.findOne({
@@ -203,6 +206,7 @@ const resolvers = {
                 guessUpdate: {
                     gameId,
                     word,
+                    currentWord: game.currentWord,
                     player: user,
                     winner,
                 },
@@ -214,14 +218,17 @@ const resolvers = {
             { gameId, conceptId, listIndex, action },
             { user }
         ) => {
+            console.log("MODIFY CONCEPT CALLED", listIndex, action, conceptId);
             const game = await Game.findById(gameId);
             let newList = [...game.conceptsLists[listIndex]];
+            console.log("NEW LIST BEFORE", newList);
             let modifiedConceptsLists = [...game.conceptsLists];
-            if (action == "add") {
-                newList = newList.push(conceptId);
+            if (action === "add") {
+                newList = [...newList, conceptId];
             } else {
                 newList = newList.filter((el) => el === conceptId);
             }
+            console.log("NEW LIST AFTER", newList);
             modifiedConceptsLists[listIndex] = newList;
             game.conceptsLists = modifiedConceptsLists;
             await game.save();
@@ -296,6 +303,11 @@ const resolvers = {
                     return pubsub.asyncIterator(["CONCEPTS_UPDATE"]);
                 },
                 (payload, variables) => {
+                    console.log("CONCEPTS_UPDATE CALLED");
+                    console.log(
+                        "should pass",
+                        payload.conceptsUpdate.gameId === variables.gameId
+                    );
                     return payload.conceptsUpdate.gameId === variables.gameId;
                 }
             ),
@@ -304,3 +316,11 @@ const resolvers = {
 };
 
 module.exports = resolvers;
+
+const cleanWord = (word) => {
+    return word
+        .toLowerCase()
+        .replace(/\s+/g, "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+};

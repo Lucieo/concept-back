@@ -35,7 +35,6 @@ const typeDefs = gql`
         turn: Int
         step: String
         winner: ID
-        gamePoints: [PointDetail]
         conceptsLists: [[ID]]
     }
     type CreatedGame {
@@ -59,6 +58,7 @@ const typeDefs = gql`
         word: String
         player: User
         winner: Boolean
+        currentWord: String
     }
     type conceptUpdate {
         gameId: ID

@@ -32,9 +32,6 @@ const gameSchema = new Schema({
         type: String,
         default: "selectWord",
     },
-    gamePoints: {
-        type: Array,
-    },
     conceptsLists: {
         type: Array,
         default: [[]],
