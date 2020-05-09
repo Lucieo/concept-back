@@ -7,8 +7,6 @@ const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const { json } = require("express");
 const debug = require("debug")("dixit:server");
-const addCards = require("./addCards");
-
 const app = express();
 
 app.use("/images", express.static(path.join(__dirname, "images")));

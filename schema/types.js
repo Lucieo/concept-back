@@ -29,15 +29,14 @@ const typeDefs = gql`
     type Game {
         id: ID
         status: String
+        currentWord: String
         creator: ID
         players: [User]
         turn: Int
-        turnDeck: [Action]
-        turnVotes: [Action]
-        currentWord: String
-        turnPoints: [PointDetail]
-        gamePoints: [PointDetail]
         step: String
+        winner: ID
+        gamePoints: [PointDetail]
+        conceptsLists: [[ID]]
     }
     type CreatedGame {
         id: ID
@@ -52,15 +51,18 @@ const typeDefs = gql`
         gameId: ID
         actionType: String
     }
-    type gameStepResponse {
-        status: String
+    type gameActionResponse {
         gameId: ID
-        stepType: String
     }
-    type GameAction {
+    type guessUpdate {
         gameId: ID
-        actionType: String
-        action: Action
+        word: String
+        player: User
+        winner: Boolean
+    }
+    type conceptUpdate {
+        gameId: ID
+        concepts: [[ID]]
     }
     type Action {
         owner: ID
@@ -69,7 +71,6 @@ const typeDefs = gql`
     type Query {
         currentUser: User!
         getGameInfo(gameId: ID): Game!
-        getDeck(gameId: ID): Deck!
     }
     type Mutation {
         signup(name: String!, email: String!, password: String!): User!
@@ -79,22 +80,26 @@ const typeDefs = gql`
         joinGame(gameId: ID!): Game
         leaveGame(gameId: ID!): Game
         changeGameStatus(gameId: ID!, newStatus: String!): Game
-        initGame(
+        initGame(gameId: ID!, currentWord: String!): gameActionResponse
+        guessAction(gameId: ID!, word: String!): gameActionResponse
+        nextTurn(gameId: ID!): gameActionResponse
+        modifyConcept(
             gameId: ID!
-            currentWord: String!
-            cardId: ID!
-        ): gameStepResponse
-        selectCard(
+            conceptId: ID
+            listIndex: Int
+            action: String
+        ): gameActionResponse
+        modifyConceptsList(
             gameId: ID!
-            cardId: ID!
-            actionType: String!
-        ): gameStepResponse
-        launchGameStep(gameId: ID!, step: String!, turnMaster: ID!): Game
+            listIndex: Int
+            action: String
+        ): gameActionResponse
     }
     type Subscription {
         playerUpdate(gameId: ID!): PlayerModifyResponse
         gameUpdate(gameId: ID!): Game
-        gameAction(gameId: ID!): GameAction
+        guessUpdate(gameId: ID!): guessUpdate
+        conceptsUpdate(gameId: ID!): conceptUpdate
     }
 `;
 

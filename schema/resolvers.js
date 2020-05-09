@@ -1,10 +1,7 @@
 const bcrypt = require("bcrypt");
 const User = require("../models/user");
 const Game = require("../models/game");
-const Deck = require("../models/deck");
-const Card = require("../models/card");
-const Action = require("../models/action");
-const { shuffle } = require("../utils");
+const Points = require("../models/points");
 
 const jwt = require("jsonwebtoken");
 const { withFilter } = require("apollo-server-express");
@@ -20,28 +17,8 @@ const resolvers = {
             return user;
         },
         getGameInfo: async (parent, { gameId }, { user }) => {
-            const game = await Game.findById(gameId)
-                .populate("players")
-                .populate({
-                    path: "turnDeck",
-                    populate: {
-                        path: "card",
-                    },
-                })
-                .populate({
-                    path: "turnVotes",
-                    populate: {
-                        path: "card",
-                    },
-                });
+            const game = await Game.findById(gameId).populate("players");
             return game;
-        },
-        getDeck: async (parent, { gameId }, { user }) => {
-            const deck = await Deck.findOne({
-                gameId,
-                owner: user,
-            }).populate("cards");
-            return deck;
         },
     },
     Mutation: {
@@ -91,12 +68,12 @@ const resolvers = {
             user.save();
             return user;
         },
-        createGame: (parent, {}, context) => {
+        createGame: async (parent, {}, context) => {
             const game = new Game({
                 creator: context.user.id,
                 players: [context.user.id],
             });
-            game.save();
+            await game.save();
             return {
                 id: game.id,
             };
@@ -146,152 +123,136 @@ const resolvers = {
             return game;
         },
         changeGameStatus: async (parent, { gameId, newStatus }, context) => {
-            const game = await Game.findById(gameId)
-                .populate("players")
-                .populate("decks");
+            const game = await Game.findById(gameId).populate("players");
             if (
                 game.status !== newStatus &&
                 context.user.id === game.creator.toString()
             ) {
                 game.status = newStatus;
                 if (newStatus === "active") {
-                    let selectedCards = await Card.find({
-                        _id: { $nin: game.distributedCards },
-                    });
-                    //selectedCards = shuffle(selectedCards);
-                    selectedCards.sort(function () {
-                        return 0.5 - Math.random();
-                    });
-                    game.players.forEach((owner) => {
-                        const userCards = selectedCards.splice(0, 6);
-                        const deck = new Deck({
-                            owner,
-                            gameId,
-                            cards: userCards,
+                    console.log(game.players);
+                    game.players.forEach(async (player) => {
+                        console.log(player);
+                        const point = new Points({
+                            gameId: game,
+                            player,
                         });
-                        deck.save();
-                        game.decks.push(deck);
-                        const userCardsIds = userCards.map((card) => card._id);
-                        game.distributedCards = [
-                            ...game.distributedCards,
-                            ...userCardsIds,
-                        ];
+                        await point.save();
                     });
                 }
                 game.save();
-                pubsub.publish("GAME_UPDATE", { gameUpdate: game });
             }
+            pubsub.publish("GAME_UPDATE", { gameUpdate: game });
             return game;
         },
-        initGame: async (parent, { gameId, cardId, currentWord }, { user }) => {
-            const card = await Card.findById(cardId);
-            const action = new Action({
-                owner: user.id,
-                actionType: "submitCard",
-                card,
-                game: gameId,
-            });
-            await action.save();
-            userDeck = await Deck.findOne({ owner: user, gameId });
-            userDeck.cards = userDeck.cards.filter((card) => {
-                return card.toString() !== cardId;
-            });
-            await userDeck.save();
-            const game = await Game.findById(gameId)
-                .populate("players")
-                .populate({
-                    path: "turnDeck",
-                    populate: {
-                        path: "card",
-                    },
-                })
-                .populate({
-                    path: "turnVotes",
-                    populate: {
-                        path: "card",
-                    },
-                });
-            if (game.turnDeck.indexOf(action) < 0) {
-                game.turnDeck.push(action);
-            }
-            game.currentWord = currentWord;
-            game.step = "select";
+        initGame: async (parent, { gameId, currentWord }, { user }) => {
+            const game = await Game.findById(gameId).populate("players");
+            game.currentWord = currentWord.toLowerCase().replace(/\s+/g, "");
+            game.step = "selectConcepts";
             await game.save();
             pubsub.publish("GAME_UPDATE", { gameUpdate: game });
-            return { gameId, step: "init", status: "Game initiated" };
+            return { gameId };
         },
-        selectCard: async (
-            parent,
-            { gameId, cardId, actionType },
-            { user }
-        ) => {
-            const card = await Card.findById(cardId);
-            const action = new Action({
-                owner: user.id,
-                actionType,
-                card,
-                game: gameId,
-            });
-            await action.save();
-
-            const game = await Game.findById(gameId);
-            if (actionType === "submitCard") {
-                //Select Card Action
-                if (game.turnDeck.indexOf(action) < 0) {
-                    game.turnDeck.push(action);
-                    userDeck = await Deck.findOne({ owner: user, gameId });
-                    userDeck.cards = userDeck.cards.filter((card) => {
-                        return card.toString() !== cardId;
-                    });
-                    await userDeck.save();
-                }
+        nextTurn: async (parent, { gameId }, { user }) => {
+            const game = await Game.findById(gameId).populate("players");
+            const scores = await Points.find({ gameId });
+            const finalWinner = scores.some((score) => +score.points >= 15);
+            if (finalWinner) {
+                game.status = "over";
+                game.players.forEach(async (player) => {
+                    const user = User.findById(player.id);
+                    user.points += scores.find(
+                        (score) => score.player.id === user.id.toString()
+                    );
+                    user.totalGames += 1;
+                    await user.save();
+                });
             } else {
-                //Vote for Card Acton
-                if (game.turnVotes.indexOf(action) < 0) {
-                    game.turnVotes.push(action);
-                }
+                game.turn =
+                    +game.turn + 1 > game.players.length - 1
+                        ? 0
+                        : +game.turn + 1;
+                game.step = "selectWord";
             }
             await game.save();
-            pubsub.publish("GAME_ACTION", {
-                gameAction: {
+            pubsub.publish("GAME_UPDATE", { gameUpdate: game });
+            return { gameId };
+        },
+        guessAction: async (parent, { gameId, word }, { user }) => {
+            const game = await Game.findById(gameId).populate("players");
+            const winner =
+                game.currentWord === word.toLowerCase().replace(/\s+/g, "");
+            if (winner) {
+                const turnMaster = game.players[game.turn];
+                const turnMasterPoints = await Points.findOne({
+                    player: turnMaster,
                     gameId,
-                    action,
-                    actionType,
+                });
+                turnMasterPoints.points = +turnMasterPoints.points + 1;
+                await turnMasterPoints.save();
+                const playerPoints = await Points.findOne({
+                    player: user,
+                    gameId,
+                });
+                playerPoints.points = +playerPoints.points + 1;
+                await playerPoints.save();
+                game.turnWinner = user;
+                await game.save();
+            }
+            pubsub.publish("GUESS_UPDATE", {
+                guessUpdate: {
+                    gameId,
+                    word,
+                    player: user,
+                    winner,
                 },
             });
-            return { gameId, step: actionType, status: "Action saved" };
+            return { gameId };
         },
-        launchGameStep: async (
+        modifyConcept: async (
             parent,
-            { gameId, step, turnMaster },
+            { gameId, conceptId, listIndex, action },
             { user }
         ) => {
-            let game = await Game.findById(gameId)
-                .populate("players")
-                .populate({
-                    path: "turnDeck",
-                    populate: {
-                        path: "card",
-                    },
-                })
-                .populate({
-                    path: "turnVotes",
-                    populate: {
-                        path: "card",
-                    },
-                });
-            if (step === "launchVote") {
-                game.step = "vote";
-                await game.save();
-            } else if (step === "launchEvaluation") {
-                game.step = "evaluate";
-                await Game.evaluateTurn(game, turnMaster);
-            } else if (step === "nextTurn") {
-                game.step = "init";
-                await Game.endTurn(game);
+            const game = await Game.findById(gameId);
+            let newList = [...game.conceptsLists[listIndex]];
+            let modifiedConceptsLists = [...game.conceptsLists];
+            if (action == "add") {
+                newList = newList.push(conceptId);
+            } else {
+                newList = newList.filter((el) => el === conceptId);
             }
-            pubsub.publish("GAME_UPDATE", { gameUpdate: game });
-            return game;
+            modifiedConceptsLists[listIndex] = newList;
+            game.conceptsLists = modifiedConceptsLists;
+            await game.save();
+            pubsub.publish("CONCEPTS_UPDATE", {
+                conceptsUpdate: {
+                    gameId,
+                    concepts: game.conceptsLists,
+                },
+            });
+        },
+        modifyConceptsList: async (
+            parent,
+            { gameId, listIndex, action },
+            { user }
+        ) => {
+            const game = await Game.findById(gameId);
+            console.log("GAME CONCEPTS LISTS IS", game.conceptsLists);
+            if (action === "add") {
+                game.conceptsLists = [...game.conceptsLists, []];
+            } else {
+                let newConceptsLists = [...game.conceptsLists];
+                newConceptsLists.splice(listIndex, 1);
+                game.conceptsLists = newConceptsLists;
+            }
+            await game.save();
+            pubsub.publish("CONCEPTS_UPDATE", {
+                conceptsUpdate: {
+                    gameId,
+                    concepts: game.conceptsLists,
+                },
+            });
         },
     },
     Subscription: {
@@ -319,13 +280,23 @@ const resolvers = {
                 }
             ),
         },
-        gameAction: {
+        guessUpdate: {
             subscribe: withFilter(
                 () => {
-                    return pubsub.asyncIterator(["GAME_ACTION"]);
+                    return pubsub.asyncIterator(["GUESS_UPDATE"]);
                 },
                 (payload, variables) => {
-                    return payload.gameAction.gameId === variables.gameId;
+                    return payload.guessUpdate.gameId === variables.gameId;
+                }
+            ),
+        },
+        conceptsUpdate: {
+            subscribe: withFilter(
+                () => {
+                    return pubsub.asyncIterator(["CONCEPTS_UPDATE"]);
+                },
+                (payload, variables) => {
+                    return payload.conceptsUpdate.gameId === variables.gameId;
                 }
             ),
         },
