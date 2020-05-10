@@ -180,37 +180,49 @@ const resolvers = {
             pubsub.publish("GAME_UPDATE", { gameUpdate: game });
             return { gameId };
         },
-        guessAction: async (parent, { gameId, word }, { user }) => {
+        guessAction: async (parent, { gameId, word, action }, { user }) => {
             const game = await Game.findById(gameId).populate("players");
-            const winner =
-                game.currentWord &&
-                cleanWord(game.currentWord) === cleanWord(word);
-            if (winner) {
-                const turnMaster = game.players[game.turn];
-                const turnMasterPoints = await Points.findOne({
-                    player: turnMaster,
-                    gameId,
+            if (action === "stopTurn") {
+                pubsub.publish("GUESS_UPDATE", {
+                    guessUpdate: {
+                        gameId,
+                        word,
+                        currentWord: game.currentWord,
+                        player: undefined,
+                        winner: true,
+                    },
                 });
-                turnMasterPoints.points = +turnMasterPoints.points + 1;
-                await turnMasterPoints.save();
-                const playerPoints = await Points.findOne({
-                    player: user,
-                    gameId,
+            } else {
+                const winner =
+                    game.currentWord &&
+                    cleanWord(game.currentWord) === cleanWord(word);
+                if (winner) {
+                    const turnMaster = game.players[game.turn];
+                    const turnMasterPoints = await Points.findOne({
+                        player: turnMaster,
+                        gameId,
+                    });
+                    turnMasterPoints.points = +turnMasterPoints.points + 1;
+                    await turnMasterPoints.save();
+                    const playerPoints = await Points.findOne({
+                        player: user,
+                        gameId,
+                    });
+                    playerPoints.points = +playerPoints.points + 1;
+                    await playerPoints.save();
+                    game.turnWinner = user;
+                    await game.save();
+                }
+                pubsub.publish("GUESS_UPDATE", {
+                    guessUpdate: {
+                        gameId,
+                        word,
+                        currentWord: game.currentWord,
+                        player: user,
+                        winner,
+                    },
                 });
-                playerPoints.points = +playerPoints.points + 1;
-                await playerPoints.save();
-                game.turnWinner = user;
-                await game.save();
             }
-            pubsub.publish("GUESS_UPDATE", {
-                guessUpdate: {
-                    gameId,
-                    word,
-                    currentWord: game.currentWord,
-                    player: user,
-                    winner,
-                },
-            });
             return { gameId };
         },
         modifyConcept: async (
@@ -321,6 +333,8 @@ const cleanWord = (word) => {
     return word
         .toLowerCase()
         .replace(/\s+/g, "")
+        .replace(/\'/g, "")
+        .replace(/\"/g, "")
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "");
 };

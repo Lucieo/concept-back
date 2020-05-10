@@ -81,7 +81,11 @@ const typeDefs = gql`
         leaveGame(gameId: ID!): Game
         changeGameStatus(gameId: ID!, newStatus: String!): Game
         initGame(gameId: ID!, currentWord: String!): gameActionResponse
-        guessAction(gameId: ID!, word: String!): gameActionResponse
+        guessAction(
+            gameId: ID!
+            word: String!
+            action: String
+        ): gameActionResponse
         nextTurn(gameId: ID!): gameActionResponse
         modifyConcept(
             gameId: ID!
