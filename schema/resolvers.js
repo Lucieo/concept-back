@@ -18,6 +18,8 @@ const resolvers = {
         },
         getGameInfo: async (parent, { gameId }, { user }) => {
             const game = await Game.findById(gameId).populate("players");
+            const gamePoints = await Points.find({ gameId }).populate("player");
+            game.gamePoints = gamePoints;
             return game;
         },
     },
@@ -142,28 +144,35 @@ const resolvers = {
                 }
                 game.save();
             }
+            const gamePoints = await Points.find({ gameId }).populate("player");
+            game.gamePoints = gamePoints;
             pubsub.publish("GAME_UPDATE", { gameUpdate: game });
             return game;
         },
         initGame: async (parent, { gameId, currentWord }, { user }) => {
             const game = await Game.findById(gameId).populate("players");
+            const gamePoints = await Points.find({ gameId }).populate("player");
             game.currentWord = currentWord;
             game.step = "selectConcepts";
             await game.save();
-            pubsub.publish("GAME_UPDATE", { gameUpdate: game });
+            game.gamePoints = gamePoints;
+            pubsub.publish("GAME_UPDATE", {
+                gameUpdate: game,
+            });
             return { gameId };
         },
         nextTurn: async (parent, { gameId }, { user }) => {
             const game = await Game.findById(gameId).populate("players");
-            const scores = await Points.find({ gameId });
+            const scores = await Points.find({ gameId }).populate("player");
             const finalWinner = scores.some((score) => +score.points >= 15);
             if (finalWinner) {
                 game.status = "over";
                 game.players.forEach(async (player) => {
-                    const user = User.findById(player.id);
-                    user.points += scores.find(
+                    const user = await User.findById(player.id);
+                    const score = scores.find(
                         (score) => score.player.id === user.id.toString()
                     );
+                    user.totalPoints += score.points;
                     user.totalGames += 1;
                     await user.save();
                 });
@@ -177,7 +186,11 @@ const resolvers = {
                 game.currentWord = undefined;
             }
             await game.save();
-            pubsub.publish("GAME_UPDATE", { gameUpdate: game });
+            const gamePoints = await Points.find({ gameId }).populate("player");
+            game.gamePoints = gamePoints;
+            pubsub.publish("GAME_UPDATE", {
+                gameUpdate: game,
+            });
             return { gameId };
         },
         guessAction: async (parent, { gameId, word, action }, { user }) => {
@@ -208,9 +221,10 @@ const resolvers = {
                         player: user,
                         gameId,
                     });
-                    playerPoints.points = +playerPoints.points + 1;
+                    playerPoints.points = +playerPoints.points + 2;
                     await playerPoints.save();
                     game.turnWinner = user;
+                    game.step = "turnWon";
                     await game.save();
                 }
                 pubsub.publish("GUESS_UPDATE", {
@@ -335,6 +349,7 @@ const cleanWord = (word) => {
         .replace(/\s+/g, "")
         .replace(/\'/g, "")
         .replace(/\"/g, "")
+        .replace(/\;/g, "")
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "");
 };

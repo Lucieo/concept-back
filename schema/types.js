@@ -36,6 +36,11 @@ const typeDefs = gql`
         step: String
         winner: ID
         conceptsLists: [[ID]]
+        gamePoints: [Points]
+    }
+    type Points {
+        player: User
+        points: Int
     }
     type CreatedGame {
         id: ID
